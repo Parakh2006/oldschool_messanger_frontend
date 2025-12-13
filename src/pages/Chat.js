@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from "react";
-import axios from "axios";
+import axiosClient from "../api/axiosClient";
 import { useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
 
 const API_URL = "https://oldschool-messanger-backend.onrender.com";
 
-
 const getAuthHeaders = () => {
   const token = localStorage.getItem("token");
   if (!token) return {};
-  return { Authorization: `Bearer ${token}` };
+
+  // ✅ Fix: prevent "Bearer Bearer ..."
+  const cleanToken = token.startsWith("Bearer ") ? token.slice(7) : token;
+
+  return { Authorization: `Bearer ${cleanToken}` };
 };
 
 // ---------- 🔐 ENCRYPTION HELPERS (TEMP: one shared secret) ----------
@@ -71,7 +74,6 @@ const base64ToBuffer = (base64) => {
     }
     return bytes.buffer;
   } catch (e) {
-    // not valid base64 → legacy / non-encrypted content
     return null;
   }
 };
@@ -184,7 +186,7 @@ function Chat() {
 
   const [conversations, setConversations] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState(null);
-  const [messages, setMessages] = useState([]); // {_id, ciphertext, iv, plaintext, ...}
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [socket, setSocket] = useState(null);
   const [presence, setPresence] = useState({});
@@ -287,7 +289,7 @@ function Chat() {
     if (!userId) return;
     setLoadingConversations(true);
     try {
-      const res = await axios.get(`${API_URL}/conversations/${userId}`, {
+      const res = await axiosClient.get(`/conversations/${userId}`, {
         headers: getAuthHeaders(),
       });
       setConversations(res.data.conversations || []);
@@ -300,7 +302,7 @@ function Chat() {
 
   const fetchMessages = async (conversationId) => {
     try {
-      const res = await axios.get(`${API_URL}/messages`, {
+      const res = await axiosClient.get(`/messages`, {
         params: { conversationId },
         headers: getAuthHeaders(),
       });
@@ -339,7 +341,6 @@ function Chat() {
   };
 
   const handleBackToList = () => {
-    // On mobile, go back to chat list
     setSelectedConversationId(null);
     setMessages([]);
     setCurrentOtherId(null);
@@ -354,8 +355,8 @@ function Chat() {
       const plaintext = input.trim();
       const { ciphertext, iv } = await encryptText(plaintext);
 
-      const res = await axios.post(
-        `${API_URL}/messages`,
+      const res = await axiosClient.post(
+        `/messages`,
         {
           conversationId: selectedConversationId,
           ciphertext,
@@ -368,12 +369,7 @@ function Chat() {
 
       const serverMessage = res.data.data;
 
-      const messageForUi = {
-        ...serverMessage,
-        plaintext,
-      };
-
-      setMessages((prev) => [...prev, messageForUi]);
+      setMessages((prev) => [...prev, { ...serverMessage, plaintext }]);
       setInput("");
 
       if (socket) {
@@ -415,8 +411,8 @@ function Chat() {
     }
 
     try {
-      const res = await axios.post(
-        `${API_URL}/conversations/by-phone`,
+      const res = await axiosClient.post(
+        `/conversations/by-phone`,
         {
           myUserId: userId,
           otherPhone: phoneInput.trim(),
@@ -428,6 +424,7 @@ function Chat() {
 
       setPhoneInput("");
       await fetchConversations();
+
       if (res.data.conversationId) {
         handleSelectConversation(
           res.data.conversationId,
@@ -445,9 +442,7 @@ function Chat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const currentPresence = currentOtherId
-    ? presence[currentOtherId]
-    : undefined;
+  const currentPresence = currentOtherId ? presence[currentOtherId] : undefined;
   const currentStatusText = currentPresence
     ? formatLastSeen(currentPresence.online, currentPresence.lastSeen)
     : "";
@@ -461,7 +456,6 @@ function Chat() {
         (showMessagesOnly ? " view-chat" : "")
       }
     >
-      {/* Sidebar (chat list + start chat) */}
       <div className="chat-sidebar">
         <div className="sidebar-header">
           <div className="app-title">Galiyoon</div>
@@ -504,9 +498,7 @@ function Chat() {
           <div className="conversation-list">
             {conversations.map((conv) => {
               const p = presence[conv.otherUserId];
-              const statusText = p
-                ? formatLastSeen(p.online, p.lastSeen)
-                : "";
+              const statusText = p ? formatLastSeen(p.online, p.lastSeen) : "";
               return (
                 <div
                   key={conv._id}
@@ -543,23 +535,17 @@ function Chat() {
         )}
       </div>
 
-      {/* Main chat area */}
       <div className="chat-main">
         {!selectedConversationId ? (
           <div className="welcome-panel">
             <h1>Welcome to Galiyoon ☁️</h1>
-            <p>
-              Select a chat from the left, or start a new one by phone number.
-            </p>
+            <p>Select a chat from the left, or start a new one by phone number.</p>
           </div>
         ) : (
           <div className="chat-panel">
             <div className="chat-header">
               {isMobile && selectedConversationId && (
-                <button
-                  className="back-button"
-                  onClick={handleBackToList}
-                >
+                <button className="back-button" onClick={handleBackToList}>
                   ← Back
                 </button>
               )}
@@ -568,9 +554,7 @@ function Chat() {
                 <div className="chat-header-name">
                   {currentOtherUsername || "Chat"}
                 </div>
-                <div className="chat-header-status">
-                  {currentStatusText}
-                </div>
+                <div className="chat-header-status">{currentStatusText}</div>
               </div>
             </div>
 

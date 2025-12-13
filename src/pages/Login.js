@@ -34,6 +34,7 @@ function Login() {
       });
 
       const { token, userId, username: uname } = res.data;
+      localStorage.clear(); 
 
       localStorage.setItem("token", token);
       localStorage.setItem("userId", userId);
