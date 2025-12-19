@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import axiosClient from "../api/axiosClient";
 import { useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
@@ -11,7 +11,6 @@ const getAuthHeaders = () => {
 
   // ✅ Fix: prevent "Bearer Bearer ..."
   const cleanToken = token.startsWith("Bearer ") ? token.slice(7) : token;
-
   return { Authorization: `Bearer ${cleanToken}` };
 };
 
@@ -42,10 +41,7 @@ const getAesKey = () => {
           hash: "SHA-256",
         },
         keyMaterial,
-        {
-          name: "AES-GCM",
-          length: 256,
-        },
+        { name: "AES-GCM", length: 256 },
         false,
         ["encrypt", "decrypt"]
       );
@@ -59,9 +55,7 @@ const getAesKey = () => {
 const bufferToBase64 = (buffer) => {
   const bytes = new Uint8Array(buffer);
   let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
   return window.btoa(binary);
 };
 
@@ -69,9 +63,7 @@ const base64ToBuffer = (base64) => {
   try {
     const binary = window.atob(base64);
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return bytes.buffer;
   } catch (e) {
     return null;
@@ -84,10 +76,7 @@ const encryptText = async (plaintext) => {
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
 
   const ciphertextBuffer = await window.crypto.subtle.encrypt(
-    {
-      name: "AES-GCM",
-      iv,
-    },
+    { name: "AES-GCM", iv },
     key,
     enc.encode(plaintext)
   );
@@ -109,10 +98,7 @@ const decryptText = async (ciphertextBase64, ivBase64) => {
     const ciphertextBuffer = base64ToBuffer(ciphertextBase64);
 
     const plainBuffer = await window.crypto.subtle.decrypt(
-      {
-        name: "AES-GCM",
-        iv,
-      },
+      { name: "AES-GCM", iv },
       key,
       ciphertextBuffer
     );
@@ -140,19 +126,12 @@ const formatLastSeen = (online, lastSeen) => {
   yesterday.setDate(now.getDate() - 1);
   const isYesterday = d.toDateString() === yesterday.toDateString();
 
-  const timeStr = d.toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const timeStr = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
   if (sameDay) return `last seen today at ${timeStr}`;
   if (isYesterday) return `last seen yesterday at ${timeStr}`;
 
-  const dateStr = d.toLocaleDateString([], {
-    day: "numeric",
-    month: "short",
-  });
-
+  const dateStr = d.toLocaleDateString([], { day: "numeric", month: "short" });
   return `last seen on ${dateStr} at ${timeStr}`;
 };
 
@@ -171,9 +150,7 @@ const useIsMobile = (breakpoint = 768) => {
   );
 
   useEffect(() => {
-    const onResize = () => {
-      setIsMobile(window.innerWidth <= breakpoint);
-    };
+    const onResize = () => setIsMobile(window.innerWidth <= breakpoint);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [breakpoint]);
@@ -207,73 +184,77 @@ function Chat() {
   const showListOnly = isMobile && !selectedConversationId;
   const showMessagesOnly = isMobile && !!selectedConversationId;
 
+  // ✅ Refs to avoid stale closures inside socket handlers
+  const selectedConversationIdRef = useRef(null);
+  const currentOtherIdRef = useRef(null);
+  const userIdRef = useRef(userId);
+
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    currentOtherIdRef.current = currentOtherId;
+  }, [currentOtherId]);
+
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
+
+  // Redirect if not logged in
   useEffect(() => {
     const token = localStorage.getItem("token");
-    if (!token || !userId || !username) {
-      navigate("/");
-    }
+    if (!token || !userId || !username) navigate("/");
   }, [navigate, userId, username]);
 
+  // ✅ Create socket ONCE (do NOT depend on messages/selectedConversationId)
   useEffect(() => {
-    const s = io(API_URL);
+    if (!userId) return;
+
+    const s = io(API_URL, { transports: ["websocket"] });
     setSocket(s);
 
-    if (userId) {
-      s.on("connect", () => {
-        s.emit("registerUser", userId);
-      });
-    }
+    s.on("connect", () => {
+      s.emit("registerUser", userId);
+    });
 
     s.on("presenceUpdate", (data) => {
       setPresence((prev) => ({
         ...prev,
-        [data.userId]: {
-          online: data.online,
-          lastSeen: data.lastSeen,
-        },
+        [data.userId]: { online: data.online, lastSeen: data.lastSeen },
       }));
-    });
-
-    s.on("newMessage", async (message) => {
-      if (message.conversationId !== selectedConversationId) return;
-
-      const already = messages.some((m) => m._id === message._id);
-      if (already) return;
-
-      const plaintext = await decryptText(message.ciphertext, message.iv);
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          ...message,
-          plaintext,
-        },
-      ]);
     });
 
     s.on("messageStatusUpdate", (update) => {
       setMessages((prev) =>
-        prev.map((m) =>
-          m._id === update.messageId ? { ...m, status: update.status } : m
-        )
+        prev.map((m) => (m._id === update.messageId ? { ...m, status: update.status } : m))
       );
     });
 
+    // typing indicators (safe using refs)
     s.on("typing", ({ conversationId, userId: typingUserId }) => {
+      const selectedId = selectedConversationIdRef.current;
+      const me = userIdRef.current;
+      const otherId = currentOtherIdRef.current;
+
       if (
-        conversationId === selectedConversationId &&
-        typingUserId !== userId &&
-        (!currentOtherId || typingUserId === currentOtherId)
+        String(conversationId) === String(selectedId) &&
+        typingUserId !== me &&
+        (!otherId || String(typingUserId) === String(otherId))
       ) {
         setIsOtherTyping(true);
       }
     });
 
     s.on("stopTyping", ({ conversationId, userId: typingUserId }) => {
+      const selectedId = selectedConversationIdRef.current;
+      const me = userIdRef.current;
+      const otherId = currentOtherIdRef.current;
+
       if (
-        conversationId === selectedConversationId &&
-        typingUserId !== userId &&
-        (!currentOtherId || typingUserId === currentOtherId)
+        String(conversationId) === String(selectedId) &&
+        typingUserId !== me &&
+        (!otherId || String(typingUserId) === String(otherId))
       ) {
         setIsOtherTyping(false);
       }
@@ -282,8 +263,28 @@ function Chat() {
     return () => {
       s.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, selectedConversationId, currentOtherId, messages]);
+  }, [userId]);
+
+  // ✅ New messages listener (stable + no stale `messages` bug)
+  useEffect(() => {
+    if (!socket) return;
+
+    const handler = async (message) => {
+      const selectedId = selectedConversationIdRef.current;
+      if (String(message.conversationId) !== String(selectedId)) return;
+
+      const plaintext = await decryptText(message.ciphertext, message.iv);
+
+      setMessages((prev) => {
+        const already = prev.some((m) => m._id === message._id);
+        if (already) return prev;
+        return [...prev, { ...message, plaintext }];
+      });
+    };
+
+    socket.on("newMessage", handler);
+    return () => socket.off("newMessage", handler);
+  }, [socket]);
 
   const fetchConversations = async () => {
     if (!userId) return;
@@ -322,11 +323,7 @@ function Chat() {
     }
   };
 
-  const handleSelectConversation = async (
-    conversationId,
-    otherUsername,
-    otherUserId
-  ) => {
+  const handleSelectConversation = async (conversationId, otherUsername, otherUserId) => {
     setSelectedConversationId(conversationId);
     setCurrentOtherUsername(otherUsername || "User");
     setCurrentOtherId(otherUserId || null);
@@ -334,8 +331,9 @@ function Chat() {
 
     await fetchMessages(conversationId);
 
+    // ✅ IMPORTANT: join room AFTER selecting chat (so emits reach you)
     if (socket) {
-      socket.emit("joinConversation", conversationId);
+      socket.emit("joinConversation", String(conversationId));
       socket.emit("conversationRead", { conversationId, userId });
     }
   };
@@ -357,26 +355,18 @@ function Chat() {
 
       const res = await axiosClient.post(
         `/messages`,
-        {
-          conversationId: selectedConversationId,
-          ciphertext,
-          iv,
-        },
-        {
-          headers: getAuthHeaders(),
-        }
+        { conversationId: selectedConversationId, ciphertext, iv },
+        { headers: getAuthHeaders() }
       );
 
       const serverMessage = res.data.data;
 
+      // ✅ Optimistic UI (sender sees immediately)
       setMessages((prev) => [...prev, { ...serverMessage, plaintext }]);
       setInput("");
 
       if (socket) {
-        socket.emit("stopTyping", {
-          conversationId: selectedConversationId,
-          userId,
-        });
+        socket.emit("stopTyping", { conversationId: selectedConversationId, userId });
       }
     } catch (err) {
       console.error("Error sending message:", err);
@@ -390,15 +380,9 @@ function Chat() {
     if (!socket || !selectedConversationId) return;
 
     if (value.trim().length > 0) {
-      socket.emit("typing", {
-        conversationId: selectedConversationId,
-        userId,
-      });
+      socket.emit("typing", { conversationId: selectedConversationId, userId });
     } else {
-      socket.emit("stopTyping", {
-        conversationId: selectedConversationId,
-        userId,
-      });
+      socket.emit("stopTyping", { conversationId: selectedConversationId, userId });
     }
   };
 
@@ -413,24 +397,15 @@ function Chat() {
     try {
       const res = await axiosClient.post(
         `/conversations/by-phone`,
-        {
-          myUserId: userId,
-          otherPhone: phoneInput.trim(),
-        },
-        {
-          headers: getAuthHeaders(),
-        }
+        { myUserId: userId, otherPhone: phoneInput.trim() },
+        { headers: getAuthHeaders() }
       );
 
       setPhoneInput("");
       await fetchConversations();
 
       if (res.data.conversationId) {
-        handleSelectConversation(
-          res.data.conversationId,
-          res.data.otherUsername,
-          res.data.otherUserId
-        );
+        handleSelectConversation(res.data.conversationId, res.data.otherUsername, res.data.otherUserId);
       }
     } catch (err) {
       setPhoneError(err.response?.data?.message || "Error starting chat");
@@ -463,9 +438,7 @@ function Chat() {
         </div>
 
         <div className="current-user">
-          <div className="avatar">
-            {username ? username[0]?.toUpperCase() : "U"}
-          </div>
+          <div className="avatar">{username ? username[0]?.toUpperCase() : "U"}</div>
           <div className="user-info">
             <div className="user-name">{username || "User"}</div>
             <div className="user-status">online</div>
@@ -508,25 +481,15 @@ function Chat() {
                       : "conversation-item"
                   }
                   onClick={() =>
-                    handleSelectConversation(
-                      conv._id,
-                      conv.otherUsername,
-                      conv.otherUserId
-                    )
+                    handleSelectConversation(conv._id, conv.otherUsername, conv.otherUserId)
                   }
                 >
                   <div className="avatar">
-                    {conv.otherUsername
-                      ? conv.otherUsername[0]?.toUpperCase()
-                      : "U"}
+                    {conv.otherUsername ? conv.otherUsername[0]?.toUpperCase() : "U"}
                   </div>
                   <div className="conversation-text">
-                    <div className="conversation-name">
-                      {conv.otherUsername || "Unknown"}
-                    </div>
-                    <div className="conversation-status">
-                      {statusText || "offline"}
-                    </div>
+                    <div className="conversation-name">{conv.otherUsername || "Unknown"}</div>
+                    <div className="conversation-status">{statusText || "offline"}</div>
                   </div>
                 </div>
               );
@@ -551,35 +514,25 @@ function Chat() {
               )}
 
               <div className="chat-header-text">
-                <div className="chat-header-name">
-                  {currentOtherUsername || "Chat"}
-                </div>
+                <div className="chat-header-name">{currentOtherUsername || "Chat"}</div>
                 <div className="chat-header-status">{currentStatusText}</div>
               </div>
             </div>
 
             <div className="messages">
               {messages.map((m) => {
-                const isOwn =
-                  m.senderId === userId || m.senderId === String(userId);
+                const isOwn = m.senderId === userId || m.senderId === String(userId);
                 const displayName = isOwn ? "You" : currentOtherUsername;
 
                 return (
-                  <div
-                    key={m._id}
-                    className={isOwn ? "message message-own" : "message"}
-                  >
+                  <div key={m._id} className={isOwn ? "message message-own" : "message"}>
                     <div className="message-text">{m.plaintext}</div>
+
                     <div className="message-meta">
                       <span>{displayName}</span>
+
                       {isOwn && (
-                        <span
-                          className={
-                            m.status === "read"
-                              ? "message-status read"
-                              : "message-status"
-                          }
-                        >
+                        <span className={`message-status ${m.status || "sent"}`}>
                           {getStatusIcon(m.status || "sent")}
                         </span>
                       )}
