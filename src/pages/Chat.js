@@ -1,3 +1,4 @@
+import "./chat.css";
 import React, { useEffect, useRef, useState } from "react";
 import axiosClient from "../api/axiosClient";
 import { useNavigate } from "react-router-dom";
