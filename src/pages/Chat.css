@@ -1,5 +1,5 @@
 /* =========================
-   GALIYOON CHAT (READ / UNREAD BUBBLES) - FORCE OVERRIDE
+   GALIYOON CHAT (READ / UNREAD BUBBLES) - CLEAN MOBILE FIX
    ========================= */
 
    * {
@@ -8,8 +8,7 @@
   
   body {
     margin: 0;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-      sans-serif;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     background: #e8f1ff;
     color: #0f172a;
   }
@@ -19,12 +18,7 @@
   .chat-page {
     height: 100vh;
     display: flex;
-    background: radial-gradient(
-      circle at top left,
-      #dbeafe 0%,
-      #e5efff 45%,
-      #f5f7ff 100%
-    );
+    background: radial-gradient(circle at top left, #dbeafe 0%, #e5efff 45%, #f5f7ff 100%);
   }
   
   /* ============== SIDEBAR ============== */
@@ -121,7 +115,7 @@
   .message-own {
     margin-left: auto;
     color: #ffffff;
-    background: transparent !important; /* IMPORTANT: prevent override */
+    background: transparent !important;
     transition: background-color 0.25s ease, box-shadow 0.25s ease;
   }
   
@@ -153,9 +147,11 @@
   .message-status.sent {
     color: rgba(255, 255, 255, 0.45);
   }
+  
   .message-status.delivered {
     color: rgba(255, 255, 255, 0.7);
   }
+  
   .message-status.read {
     color: #93c5fd;
   }
@@ -193,7 +189,7 @@
     cursor: pointer;
   }
   
-  /* ============== MOBILE ============== */
+  /* ============== MOBILE (iOS SAFARI FIX) ============== */
   
   @media (max-width: 768px) {
     .chat-page {
@@ -213,12 +209,26 @@
     .chat-panel {
       max-width: 100%;
       border-radius: 0;
+      height: 100dvh; /* important for iOS Safari */
+      display: flex;
+      flex-direction: column;
+    }
+  
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding-bottom: 120px; /* space for fixed input + safari bar */
     }
   
     .input-row {
-      position: sticky;
-      bottom: 0;
-      z-index: 10;
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: env(safe-area-inset-bottom);
+      background: #fff;
+      padding: 12px;
+      border-top: 1px solid #e5e7eb;
+      z-index: 1000;
     }
   }
   
