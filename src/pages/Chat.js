@@ -135,7 +135,7 @@ const formatLastSeen = (online, lastSeen) => {
   return `last seen on ${dateStr} at ${timeStr}`;
 };
 
-// ✅ derive status from timestamps (THIS fixes your issue)
+// ✅ derive status from timestamps
 const deriveStatus = (m) => {
   if (m?.readAt) return "read";
   if (m?.deliveredAt) return "delivered";
@@ -195,6 +195,14 @@ function Chat() {
   const currentOtherIdRef = useRef(null);
   const userIdRef = useRef(userId);
 
+  // ✅ scroll to bottom
+  const messagesEndRef = useRef(null);
+  const scrollToBottom = () => {
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+  };
+
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
   }, [selectedConversationId]);
@@ -231,7 +239,7 @@ function Chat() {
       }));
     });
 
-    // ✅ update timestamps on status updates (deliveredAt/readAt)
+    // ✅ update timestamps on status updates
     s.on("messageStatusUpdate", (update) => {
       setMessages((prev) =>
         prev.map((m) => {
@@ -294,10 +302,13 @@ function Chat() {
         if (already) return prev;
         return [...prev, { ...message, plaintext }];
       });
+
+      scrollToBottom();
     };
 
     socket.on("newMessage", handler);
     return () => socket.off("newMessage", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket]);
 
   const fetchConversations = async () => {
@@ -332,6 +343,7 @@ function Chat() {
       );
 
       setMessages(withPlaintext);
+      scrollToBottom();
     } catch (err) {
       console.error("Error fetching messages:", err);
     }
@@ -374,8 +386,15 @@ function Chat() {
 
       const serverMessage = res.data.data;
 
-      setMessages((prev) => [...prev, { ...serverMessage, plaintext }]);
+      // ✅ IMPORTANT: prevent double message if socket already added it
+      setMessages((prev) => {
+        const already = prev.some((m) => String(m._id) === String(serverMessage._id));
+        if (already) return prev;
+        return [...prev, { ...serverMessage, plaintext }];
+      });
+
       setInput("");
+      scrollToBottom();
 
       if (socket) {
         socket.emit("stopTyping", { conversationId: selectedConversationId, userId });
@@ -540,7 +559,7 @@ function Chat() {
                 const isOwn = String(m.senderId) === String(userId);
                 const displayName = isOwn ? "You" : currentOtherUsername;
 
-                const status = deriveStatus(m); // ✅ sent/delivered/read
+                const status = deriveStatus(m);
                 const bubbleClass =
                   isOwn
                     ? `message message-own ${status === "read" ? "message-read" : "message-unread"}`
@@ -562,6 +581,7 @@ function Chat() {
                   </div>
                 );
               })}
+              <div ref={messagesEndRef} />
             </div>
 
             {isOtherTyping && (
