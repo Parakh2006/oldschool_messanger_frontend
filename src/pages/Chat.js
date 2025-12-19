@@ -8,14 +8,11 @@ const API_URL = "https://oldschool-messanger-backend.onrender.com";
 const getAuthHeaders = () => {
   const token = localStorage.getItem("token");
   if (!token) return {};
-
-  // ✅ Fix: prevent "Bearer Bearer ..."
   const cleanToken = token.startsWith("Bearer ") ? token.slice(7) : token;
   return { Authorization: `Bearer ${cleanToken}` };
 };
 
 // ---------- 🔐 ENCRYPTION HELPERS (TEMP: one shared secret) ----------
-
 const SECRET_PASSPHRASE = "galiyoon-local-secret-v1";
 const SALT = "galiyoon-salt-v1";
 
@@ -55,7 +52,9 @@ const getAesKey = () => {
 const bufferToBase64 = (buffer) => {
   const bytes = new Uint8Array(buffer);
   let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
   return window.btoa(binary);
 };
 
@@ -63,7 +62,9 @@ const base64ToBuffer = (base64) => {
   try {
     const binary = window.atob(base64);
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
     return bytes.buffer;
   } catch (e) {
     return null;
@@ -93,9 +94,11 @@ const decryptText = async (ciphertextBase64, ivBase64) => {
     const dec = new TextDecoder();
 
     const ivBuffer = base64ToBuffer(ivBase64);
+    if (!ivBuffer) return "[unable to decrypt]";
     const iv = new Uint8Array(ivBuffer);
 
     const ciphertextBuffer = base64ToBuffer(ciphertextBase64);
+    if (!ciphertextBuffer) return "[unable to decrypt]";
 
     const plainBuffer = await window.crypto.subtle.decrypt(
       { name: "AES-GCM", iv },
@@ -111,7 +114,6 @@ const decryptText = async (ciphertextBase64, ivBase64) => {
 };
 
 // ---------- OTHER HELPERS ----------
-
 const formatLastSeen = (online, lastSeen) => {
   if (online) return "online";
   if (!lastSeen) return "offline";
@@ -126,7 +128,10 @@ const formatLastSeen = (online, lastSeen) => {
   yesterday.setDate(now.getDate() - 1);
   const isYesterday = d.toDateString() === yesterday.toDateString();
 
-  const timeStr = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const timeStr = d.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 
   if (sameDay) return `last seen today at ${timeStr}`;
   if (isYesterday) return `last seen yesterday at ${timeStr}`;
@@ -143,7 +148,6 @@ const getStatusIcon = (status) => {
 };
 
 // ---------- MOBILE HOOK ----------
-
 const useIsMobile = (breakpoint = 768) => {
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth <= breakpoint : false
@@ -207,7 +211,7 @@ function Chat() {
     if (!token || !userId || !username) navigate("/");
   }, [navigate, userId, username]);
 
-  // ✅ Create socket ONCE (do NOT depend on messages/selectedConversationId)
+  // ✅ Create socket ONCE
   useEffect(() => {
     if (!userId) return;
 
@@ -226,12 +230,28 @@ function Chat() {
     });
 
     s.on("messageStatusUpdate", (update) => {
-      setMessages((prev) =>
-        prev.map((m) => (m._id === update.messageId ? { ...m, status: update.status } : m))
-      );
+      // Update shape 1: { messageId, status }
+      if (update?.messageId) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m._id === update.messageId ? { ...m, status: update.status } : m
+          )
+        );
+        return;
+      }
+
+      // Update shape 2 (fallback): { conversationId, status }
+      if (update?.conversationId) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            String(m.conversationId) === String(update.conversationId)
+              ? { ...m, status: update.status }
+              : m
+          )
+        );
+      }
     });
 
-    // typing indicators (safe using refs)
     s.on("typing", ({ conversationId, userId: typingUserId }) => {
       const selectedId = selectedConversationIdRef.current;
       const me = userIdRef.current;
@@ -239,7 +259,7 @@ function Chat() {
 
       if (
         String(conversationId) === String(selectedId) &&
-        typingUserId !== me &&
+        String(typingUserId) !== String(me) &&
         (!otherId || String(typingUserId) === String(otherId))
       ) {
         setIsOtherTyping(true);
@@ -253,7 +273,7 @@ function Chat() {
 
       if (
         String(conversationId) === String(selectedId) &&
-        typingUserId !== me &&
+        String(typingUserId) !== String(me) &&
         (!otherId || String(typingUserId) === String(otherId))
       ) {
         setIsOtherTyping(false);
@@ -265,7 +285,7 @@ function Chat() {
     };
   }, [userId]);
 
-  // ✅ New messages listener (stable + no stale `messages` bug)
+  // ✅ New messages listener (stable)
   useEffect(() => {
     if (!socket) return;
 
@@ -323,7 +343,11 @@ function Chat() {
     }
   };
 
-  const handleSelectConversation = async (conversationId, otherUsername, otherUserId) => {
+  const handleSelectConversation = async (
+    conversationId,
+    otherUsername,
+    otherUserId
+  ) => {
     setSelectedConversationId(conversationId);
     setCurrentOtherUsername(otherUsername || "User");
     setCurrentOtherId(otherUserId || null);
@@ -331,7 +355,6 @@ function Chat() {
 
     await fetchMessages(conversationId);
 
-    // ✅ IMPORTANT: join room AFTER selecting chat (so emits reach you)
     if (socket) {
       socket.emit("joinConversation", String(conversationId));
       socket.emit("conversationRead", { conversationId, userId });
@@ -361,12 +384,18 @@ function Chat() {
 
       const serverMessage = res.data.data;
 
-      // ✅ Optimistic UI (sender sees immediately)
-      setMessages((prev) => [...prev, { ...serverMessage, plaintext }]);
+      // ✅ Optimistic UI
+      setMessages((prev) => [
+        ...prev,
+        { ...serverMessage, plaintext, status: serverMessage.status || "sent" },
+      ]);
       setInput("");
 
       if (socket) {
-        socket.emit("stopTyping", { conversationId: selectedConversationId, userId });
+        socket.emit("stopTyping", {
+          conversationId: selectedConversationId,
+          userId,
+        });
       }
     } catch (err) {
       console.error("Error sending message:", err);
@@ -382,7 +411,10 @@ function Chat() {
     if (value.trim().length > 0) {
       socket.emit("typing", { conversationId: selectedConversationId, userId });
     } else {
-      socket.emit("stopTyping", { conversationId: selectedConversationId, userId });
+      socket.emit("stopTyping", {
+        conversationId: selectedConversationId,
+        userId,
+      });
     }
   };
 
@@ -405,7 +437,11 @@ function Chat() {
       await fetchConversations();
 
       if (res.data.conversationId) {
-        handleSelectConversation(res.data.conversationId, res.data.otherUsername, res.data.otherUserId);
+        handleSelectConversation(
+          res.data.conversationId,
+          res.data.otherUsername,
+          res.data.otherUserId
+        );
       }
     } catch (err) {
       setPhoneError(err.response?.data?.message || "Error starting chat");
@@ -438,7 +474,9 @@ function Chat() {
         </div>
 
         <div className="current-user">
-          <div className="avatar">{username ? username[0]?.toUpperCase() : "U"}</div>
+          <div className="avatar">
+            {username ? username[0]?.toUpperCase() : "U"}
+          </div>
           <div className="user-info">
             <div className="user-name">{username || "User"}</div>
             <div className="user-status">online</div>
@@ -481,15 +519,25 @@ function Chat() {
                       : "conversation-item"
                   }
                   onClick={() =>
-                    handleSelectConversation(conv._id, conv.otherUsername, conv.otherUserId)
+                    handleSelectConversation(
+                      conv._id,
+                      conv.otherUsername,
+                      conv.otherUserId
+                    )
                   }
                 >
                   <div className="avatar">
-                    {conv.otherUsername ? conv.otherUsername[0]?.toUpperCase() : "U"}
+                    {conv.otherUsername
+                      ? conv.otherUsername[0]?.toUpperCase()
+                      : "U"}
                   </div>
                   <div className="conversation-text">
-                    <div className="conversation-name">{conv.otherUsername || "Unknown"}</div>
-                    <div className="conversation-status">{statusText || "offline"}</div>
+                    <div className="conversation-name">
+                      {conv.otherUsername || "Unknown"}
+                    </div>
+                    <div className="conversation-status">
+                      {statusText || "offline"}
+                    </div>
                   </div>
                 </div>
               );
@@ -502,7 +550,9 @@ function Chat() {
         {!selectedConversationId ? (
           <div className="welcome-panel">
             <h1>Welcome to Galiyoon ☁️</h1>
-            <p>Select a chat from the left, or start a new one by phone number.</p>
+            <p>
+              Select a chat from the left, or start a new one by phone number.
+            </p>
           </div>
         ) : (
           <div className="chat-panel">
@@ -514,18 +564,32 @@ function Chat() {
               )}
 
               <div className="chat-header-text">
-                <div className="chat-header-name">{currentOtherUsername || "Chat"}</div>
+                <div className="chat-header-name">
+                  {currentOtherUsername || "Chat"}
+                </div>
                 <div className="chat-header-status">{currentStatusText}</div>
               </div>
             </div>
 
             <div className="messages">
               {messages.map((m) => {
-                const isOwn = m.senderId === userId || m.senderId === String(userId);
+                const isOwn =
+                  m.senderId === userId || m.senderId === String(userId);
                 const displayName = isOwn ? "You" : currentOtherUsername;
 
                 return (
-                  <div key={m._id} className={isOwn ? "message message-own" : "message"}>
+                  <div
+                    key={m._id}
+                    className={
+                      isOwn
+                        ? `message message-own ${
+                            (m.status || "sent") === "read"
+                              ? "message-read"
+                              : "message-unread"
+                          }`
+                        : "message"
+                    }
+                  >
                     <div className="message-text">{m.plaintext}</div>
 
                     <div className="message-meta">
